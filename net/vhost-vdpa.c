@@ -54,6 +54,7 @@ const int vdpa_feature_bits[] = {
     VIRTIO_F_VERSION_1,
     VIRTIO_NET_F_CSUM,
     VIRTIO_NET_F_GUEST_CSUM,
+    VIRTIO_NET_F_CTRL_GUEST_OFFLOADS,
     VIRTIO_NET_F_GSO,
     VIRTIO_NET_F_GUEST_TSO4,
     VIRTIO_NET_F_GUEST_TSO6,
@@ -184,6 +185,14 @@ static void vhost_vdpa_cleanup(NetClientState *nc)
 {
     VhostVDPAState *s = DO_UPCAST(VhostVDPAState, nc, nc);
 
+    /*
+     * If a peer NIC is attached, do not cleanup anything.
+     * Cleanup will happen as a part of qemu_cleanup() -> net_cleanup()
+     * when the guest is shutting down.
+     */
+    if (nc->peer && nc->peer->info->type == NET_CLIENT_DRIVER_NIC) {
+        return;
+    }
     qemu_vfree(s->cvq_cmd_out_buffer);
     qemu_vfree(s->status);
     if (s->vhost_net) {
@@ -650,8 +659,9 @@ static int vhost_vdpa_net_load_mac(VhostVDPAState *s, const VirtIONet *n)
         if (unlikely(dev_written < 0)) {
             return dev_written;
         }
-
-        return *s->status != VIRTIO_NET_OK;
+        if (*s->status != VIRTIO_NET_OK) {
+            return -EIO;
+        }
     }
 
     return 0;
@@ -675,8 +685,11 @@ static int vhost_vdpa_net_load_mq(VhostVDPAState *s,
     if (unlikely(dev_written < 0)) {
         return dev_written;
     }
+    if (*s->status != VIRTIO_NET_OK) {
+        return -EIO;
+    }
 
-    return *s->status != VIRTIO_NET_OK;
+    return 0;
 }
 
 static int vhost_vdpa_net_load(NetClientState *nc)
@@ -765,7 +778,7 @@ static int vhost_vdpa_net_handle_ctrl_avail(VhostShadowVirtqueue *svq,
     }
 
     if (*s->status != VIRTIO_NET_OK) {
-        return VIRTIO_NET_ERR;
+        goto out;
     }
 
     status = VIRTIO_NET_ERR;
@@ -781,7 +794,16 @@ out:
         error_report("Bad device CVQ written length");
     }
     vhost_svq_push_elem(svq, elem, MIN(in_len, sizeof(status)));
-    g_free(elem);
+    /*
+     * `elem` belongs to vhost_vdpa_net_handle_ctrl_avail() only when
+     * the function successfully forwards the CVQ command, indicated
+     * by a non-negative value of `dev_written`. Otherwise, it still
+     * belongs to SVQ.
+     * This function should only free the `elem` when it owns.
+     */
+    if (dev_written >= 0) {
+        g_free(elem);
+    }
     return dev_written < 0 ? dev_written : 0;
 }
 

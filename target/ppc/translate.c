@@ -3803,6 +3803,7 @@ static void gen_lqarx(DisasContext *ctx)
         tcg_gen_qemu_ld_i64(lo, EA, ctx->mem_idx, MO_BEUQ);
     }
 
+    tcg_gen_mov_tl(cpu_reserve, EA);
     tcg_gen_st_tl(hi, cpu_env, offsetof(CPUPPCState, reserve_val));
     tcg_gen_st_tl(lo, cpu_env, offsetof(CPUPPCState, reserve_val2));
 }
@@ -4131,6 +4132,9 @@ static void pmu_count_insns(DisasContext *ctx)
 
 static inline bool use_goto_tb(DisasContext *ctx, target_ulong dest)
 {
+    if (unlikely(ctx->singlestep_enabled)) {
+        return false;
+    }
     return translator_use_goto_tb(&ctx->base, dest);
 }
 
