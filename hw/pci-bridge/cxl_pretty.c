@@ -20,12 +20,11 @@ void snpprintpacket(char *buf, void *pckt, size_t at_most)
     if (pload_type != CXL_IO)
         return; /* ignore a non-CXL.io packet */
 
-    cxl_io_fmt_type_t io_fmt =
-        ((cxl_io_header_t *)(pckt_data + sizeof(system_header_packet_t)))
-            ->fmt_type;
+    pckt_data += sizeof(system_header_packet_t) + sizeof(tlp_prefix_header_t);
+    cxl_io_fmt_type_t io_fmt = ((cxl_io_header_t *)pckt_data)->fmt_type;
 
-    void *pload_ptr = (void *)(pckt_data + sizeof(system_header_packet_t) +
-                               sizeof(cxl_io_header_t));
+    pckt_data += sizeof(cxl_io_header_t);
+    void *pload_ptr = (void *)pckt_data;
 
     at_most -= snprintf(buf, at_most, "[CXL.io PACKET] \n");
 

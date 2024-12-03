@@ -83,6 +83,12 @@ typedef enum {
 } cxl_io_fmt_type_t;
 
 typedef struct {
+    uint8_t pcie_base_spec_defined;
+    uint16_t ld_id;
+    uint8_t reserved;
+} __attribute__((packed)) tlp_prefix_header_t;
+
+typedef struct {
     cxl_io_fmt_type_t fmt_type : 8;
     uint8_t th                 : 1;
     uint8_t rsvd               : 1;
@@ -110,6 +116,7 @@ typedef struct {
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_mreq_header_t mreq_header;
 } __attribute__((packed)) cxl_io_mem_base_packet_t;
@@ -138,12 +145,14 @@ typedef struct {
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_cfg_req_header_t cfg_req_header;
 } __attribute__((packed)) cxl_io_cfg_rd_packet_t;
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_cfg_req_header_t cfg_req_header;
     uint32_t value;
@@ -163,12 +172,14 @@ typedef struct {
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_completion_header_t cpl_header;
 } __attribute__((packed)) cxl_io_completion_packet_t;
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_completion_header_t cpl_header;
     uint32_t data;
@@ -176,6 +187,7 @@ typedef struct {
 
 typedef struct {
     system_header_packet_t system_header;
+    tlp_prefix_header_t tlp_prefix_header;
     cxl_io_header_t cxl_io_header;
     cxl_io_completion_header_t cpl_header;
     uint64_t data;
