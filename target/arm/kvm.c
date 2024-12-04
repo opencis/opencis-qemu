@@ -247,6 +247,13 @@ int kvm_arm_get_max_vm_ipa_size(MachineState *ms, bool *fixed_ipa)
     return ret > 0 ? ret : 40;
 }
 
+int kvm_arch_get_default_type(MachineState *ms)
+{
+    bool fixed_ipa;
+    int size = kvm_arm_get_max_vm_ipa_size(ms, &fixed_ipa);
+    return fixed_ipa ? 0 : size;
+}
+
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     int ret = 0;
@@ -279,6 +286,8 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
                                     KVM_CAP_ARM_INJECT_EXT_DABT);
         }
     }
+
+    kvm_arm_init_debug(s);
 
     return ret;
 }
