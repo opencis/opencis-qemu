@@ -663,8 +663,6 @@ static void vfio_msi_enable(VFIOPCIDevice *vdev)
 
     vfio_disable_interrupts(vdev);
 
-    vdev->nr_vectors = msi_nr_vectors_allocated(&vdev->pdev);
-retry:
     /*
      * Setting vector notifiers needs to enable route for each vector.
      * Deferring to commit the KVM routes once rather than per vector
@@ -672,6 +670,8 @@ retry:
      */
     vfio_prepare_kvm_msi_virq_batch(vdev);
 
+    vdev->nr_vectors = msi_nr_vectors_allocated(&vdev->pdev);
+retry:
     vdev->msi_vectors = g_new0(VFIOMSIVector, vdev->nr_vectors);
 
     for (i = 0; i < vdev->nr_vectors; i++) {
@@ -1752,11 +1752,9 @@ static void vfio_bars_finalize(VFIOPCIDevice *vdev)
 
         vfio_bar_quirk_finalize(vdev, i);
         vfio_region_finalize(&bar->region);
-        if (bar->mr) {
-            assert(bar->size);
+        if (bar->size) {
             object_unparent(OBJECT(bar->mr));
             g_free(bar->mr);
-            bar->mr = NULL;
         }
     }
 
@@ -3160,13 +3158,8 @@ static void vfio_realize(PCIDevice *pdev, Error **errp)
     return;
 
 out_deregister:
-    if (vdev->interrupt == VFIO_INT_INTx) {
-        vfio_intx_disable(vdev);
-    }
     pci_device_set_intx_routing_notifier(&vdev->pdev, NULL);
-    if (vdev->irqchip_change_notifier.notify) {
-        kvm_irqchip_remove_change_notifier(&vdev->irqchip_change_notifier);
-    }
+    kvm_irqchip_remove_change_notifier(&vdev->irqchip_change_notifier);
 out_teardown:
     vfio_teardown_msi(vdev);
     vfio_bars_exit(vdev);

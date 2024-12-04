@@ -272,14 +272,9 @@ static void *show_parts(void *arg)
     return NULL;
 }
 
-struct NbdClientOpts {
-    char *device;
-    bool fork_process;
-};
-
 static void *nbd_client_thread(void *arg)
 {
-    struct NbdClientOpts *opts = arg;
+    char *device = arg;
     NBDExportInfo info = { .request_sizes = false, .name = g_strdup("") };
     QIOChannelSocket *sioc;
     int fd = -1;
@@ -303,10 +298,10 @@ static void *nbd_client_thread(void *arg)
         goto out;
     }
 
-    fd = open(opts->device, O_RDWR);
+    fd = open(device, O_RDWR);
     if (fd < 0) {
         /* Linux-only, we can use %m in printf.  */
-        error_report("Failed to open %s: %m", opts->device);
+        error_report("Failed to open %s: %m", device);
         goto out;
     }
 
@@ -316,11 +311,11 @@ static void *nbd_client_thread(void *arg)
     }
 
     /* update partition table */
-    pthread_create(&show_parts_thread, NULL, show_parts, opts->device);
+    pthread_create(&show_parts_thread, NULL, show_parts, device);
 
-    if (verbose && !opts->fork_process) {
+    if (verbose) {
         fprintf(stderr, "NBD device %s is now connected to %s\n",
-                opts->device, srcpath);
+                device, srcpath);
     } else {
         /* Close stderr so that the qemu-nbd process exits.  */
         dup2(STDOUT_FILENO, STDERR_FILENO);
@@ -580,13 +575,11 @@ int main(int argc, char **argv)
     bool writethrough = false; /* Client will flush as needed. */
     bool fork_process = false;
     bool list = false;
+    int old_stderr = -1;
     unsigned socket_activation;
     const char *pid_file_name = NULL;
     const char *selinux_label = NULL;
     BlockExportOptions *export_opts;
-#if HAVE_NBD_DEVICE
-    struct NbdClientOpts opts;
-#endif
 
 #ifdef CONFIG_POSIX
     os_setup_early_signal_handling();
@@ -937,6 +930,11 @@ int main(int argc, char **argv)
         } else if (pid == 0) {
             close(stderr_fd[0]);
 
+            /* Remember parent's stderr if we will be restoring it. */
+            if (fork_process) {
+                old_stderr = dup(STDERR_FILENO);
+            }
+
             ret = qemu_daemon(1, 0);
 
             /* Temporarily redirect stderr to the parent's pipe...  */
@@ -1123,12 +1121,8 @@ int main(int argc, char **argv)
     if (device) {
 #if HAVE_NBD_DEVICE
         int ret;
-        opts = (struct NbdClientOpts) {
-            .device = device,
-            .fork_process = fork_process,
-        };
 
-        ret = pthread_create(&client_thread, NULL, nbd_client_thread, &opts);
+        ret = pthread_create(&client_thread, NULL, nbd_client_thread, device);
         if (ret != 0) {
             error_report("Failed to create client thread: %s", strerror(ret));
             exit(EXIT_FAILURE);
@@ -1154,7 +1148,8 @@ int main(int argc, char **argv)
     }
 
     if (fork_process) {
-        dup2(STDOUT_FILENO, STDERR_FILENO);
+        dup2(old_stderr, STDERR_FILENO);
+        close(old_stderr);
     }
 
     state = RUNNING;

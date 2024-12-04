@@ -659,7 +659,6 @@ safe_syscall4(pid_t, wait4, pid_t, pid, int *, status, int, options, \
 #endif
 safe_syscall5(int, waitid, idtype_t, idtype, id_t, id, siginfo_t *, infop, \
               int, options, struct rusage *, rusage)
-safe_syscall3(int, execve, const char *, filename, char **, argv, char **, envp)
 safe_syscall5(int, execveat, int, dirfd, const char *, filename,
               char **, argv, char **, envp, int, flags)
 #if defined(TARGET_NR_select) || defined(TARGET_NR__newselect) || \
@@ -801,13 +800,12 @@ static inline int host_to_target_sock_type(int host_type)
     return target_type;
 }
 
-static abi_ulong target_brk, initial_target_brk;
+static abi_ulong target_brk;
 static abi_ulong brk_page;
 
 void target_set_brk(abi_ulong new_brk)
 {
-    target_brk = TARGET_PAGE_ALIGN(new_brk);
-    initial_target_brk = target_brk;
+    target_brk = new_brk;
     brk_page = HOST_PAGE_ALIGN(target_brk);
 }
 
@@ -825,18 +823,15 @@ abi_long do_brk(abi_ulong brk_val)
         return target_brk;
     }
 
-    /* do not allow to shrink below initial brk value */
-    if (brk_val < initial_target_brk) {
-        brk_val = initial_target_brk;
-    }
-
     new_brk = TARGET_PAGE_ALIGN(brk_val);
     new_host_brk_page = HOST_PAGE_ALIGN(brk_val);
 
     /* brk_val and old target_brk might be on the same page */
     if (new_brk == TARGET_PAGE_ALIGN(target_brk)) {
-        /* empty remaining bytes in (possibly larger) host page */
-        memset(g2h_untagged(new_brk), 0, new_host_brk_page - new_brk);
+        if (brk_val > target_brk) {
+            /* empty remaining bytes in (possibly larger) host page */
+            memset(g2h_untagged(target_brk), 0, new_host_brk_page - target_brk);
+        }
         target_brk = brk_val;
         return target_brk;
     }
@@ -844,7 +839,7 @@ abi_long do_brk(abi_ulong brk_val)
     /* Release heap if necesary */
     if (new_brk < target_brk) {
         /* empty remaining bytes in (possibly larger) host page */
-        memset(g2h_untagged(new_brk), 0, new_host_brk_page - new_brk);
+        memset(g2h_untagged(brk_val), 0, new_host_brk_page - brk_val);
 
         /* free unused host pages and set new brk_page */
         target_munmap(new_host_brk_page, brk_page - new_host_brk_page);
@@ -860,13 +855,12 @@ abi_long do_brk(abi_ulong brk_val)
      * itself); instead we treat "mapped but at wrong address" as
      * a failure and unmap again.
      */
-    if (new_host_brk_page > brk_page) {
-        new_alloc_size = new_host_brk_page - brk_page;
+    new_alloc_size = new_host_brk_page - brk_page;
+    if (new_alloc_size) {
         mapped_addr = get_errno(target_mmap(brk_page, new_alloc_size,
                                         PROT_READ|PROT_WRITE,
                                         MAP_ANON|MAP_PRIVATE, 0, 0));
     } else {
-        new_alloc_size = 0;
         mapped_addr = brk_page;
     }
 
@@ -878,7 +872,7 @@ abi_long do_brk(abi_ulong brk_val)
          * come from the remaining part of the previous page: it may
          * contains garbage data due to a previous heap usage (grown
          * then shrunken).  */
-        memset(g2h_untagged(brk_page), 0, HOST_PAGE_ALIGN(brk_page) - brk_page);
+        memset(g2h_untagged(target_brk), 0, brk_page - target_brk);
 
         target_brk = brk_val;
         brk_page = new_host_brk_page;
@@ -3446,17 +3440,7 @@ static abi_long do_accept4(int fd, abi_ulong target_addr,
     abi_long ret;
     int host_flags;
 
-    if (flags & ~(TARGET_SOCK_CLOEXEC | TARGET_SOCK_NONBLOCK)) {
-        return -TARGET_EINVAL;
-    }
-
-    host_flags = 0;
-    if (flags & TARGET_SOCK_NONBLOCK) {
-        host_flags |= SOCK_NONBLOCK;
-    }
-    if (flags & TARGET_SOCK_CLOEXEC) {
-        host_flags |= SOCK_CLOEXEC;
-    }
+    host_flags = target_to_host_bitmask(flags, fcntl_flags_tbl);
 
     if (target_addr == 0) {
         return get_errno(safe_accept4(fd, NULL, NULL, host_flags));
@@ -7148,10 +7132,6 @@ static abi_long do_fcntl(int fd, int cmd, abi_ulong arg)
         ret = get_errno(safe_fcntl(fd, host_cmd, arg));
         if (ret >= 0) {
             ret = host_to_target_bitmask(ret, fcntl_flags_tbl);
-            /* tell 32-bit guests it uses largefile on 64-bit hosts: */
-            if (O_LARGEFILE == 0 && HOST_LONG_BITS == 64) {
-                ret |= TARGET_O_LARGEFILE;
-            }
         }
         break;
 
@@ -8408,9 +8388,9 @@ static int do_openat(CPUArchState *cpu_env, int dirfd, const char *pathname, int
     return safe_openat(dirfd, path(pathname), flags, mode);
 }
 
-static int do_execv(CPUArchState *cpu_env, int dirfd,
-                    abi_long pathname, abi_long guest_argp,
-                    abi_long guest_envp, int flags, bool is_execveat)
+static int do_execveat(CPUArchState *cpu_env, int dirfd,
+                       abi_long pathname, abi_long guest_argp,
+                       abi_long guest_envp, int flags)
 {
     int ret;
     char **argp, **envp;
@@ -8489,14 +8469,11 @@ static int do_execv(CPUArchState *cpu_env, int dirfd,
         goto execve_efault;
     }
 
-    const char *exe = p;
     if (is_proc_myself(p, "exe")) {
-        exe = exec_path;
+        ret = get_errno(safe_execveat(dirfd, exec_path, argp, envp, flags));
+    } else {
+        ret = get_errno(safe_execveat(dirfd, p, argp, envp, flags));
     }
-    ret = is_execveat
-        ? safe_execveat(dirfd, exe, argp, envp, flags)
-        : safe_execve(exe, argp, envp);
-    ret = get_errno(ret);
 
     unlock_user(p, pathname, 0);
 
@@ -9035,9 +9012,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         return ret;
 #endif
     case TARGET_NR_execveat:
-        return do_execv(cpu_env, arg1, arg2, arg3, arg4, arg5, true);
+        return do_execveat(cpu_env, arg1, arg2, arg3, arg4, arg5);
     case TARGET_NR_execve:
-        return do_execv(cpu_env, AT_FDCWD, arg1, arg2, arg3, 0, false);
+        return do_execveat(cpu_env, AT_FDCWD, arg1, arg2, arg3, 0);
     case TARGET_NR_chdir:
         if (!(p = lock_user_string(arg1)))
             return -TARGET_EFAULT;
@@ -11498,58 +11475,39 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         {
             int gidsetsize = arg1;
             target_id *target_grouplist;
-            g_autofree gid_t *grouplist = NULL;
+            gid_t *grouplist;
             int i;
 
-            if (gidsetsize > NGROUPS_MAX) {
-                return -TARGET_EINVAL;
-            }
-            if (gidsetsize > 0) {
-                grouplist = g_try_new(gid_t, gidsetsize);
-                if (!grouplist) {
-                    return -TARGET_ENOMEM;
-                }
-            }
+            grouplist = alloca(gidsetsize * sizeof(gid_t));
             ret = get_errno(getgroups(gidsetsize, grouplist));
-            if (!is_error(ret) && gidsetsize > 0) {
-                target_grouplist = lock_user(VERIFY_WRITE, arg2,
-                                             gidsetsize * sizeof(target_id), 0);
-                if (!target_grouplist) {
+            if (gidsetsize == 0)
+                return ret;
+            if (!is_error(ret)) {
+                target_grouplist = lock_user(VERIFY_WRITE, arg2, gidsetsize * sizeof(target_id), 0);
+                if (!target_grouplist)
                     return -TARGET_EFAULT;
-                }
-                for (i = 0; i < ret; i++) {
+                for(i = 0;i < ret; i++)
                     target_grouplist[i] = tswapid(high2lowgid(grouplist[i]));
-                }
-                unlock_user(target_grouplist, arg2,
-                            gidsetsize * sizeof(target_id));
+                unlock_user(target_grouplist, arg2, gidsetsize * sizeof(target_id));
             }
-            return ret;
         }
+        return ret;
     case TARGET_NR_setgroups:
         {
             int gidsetsize = arg1;
             target_id *target_grouplist;
-            g_autofree gid_t *grouplist = NULL;
+            gid_t *grouplist = NULL;
             int i;
-
-            if (gidsetsize > NGROUPS_MAX || gidsetsize < 0) {
-                return -TARGET_EINVAL;
-            }
-            if (gidsetsize > 0) {
-                grouplist = g_try_new(gid_t, gidsetsize);
-                if (!grouplist) {
-                    return -TARGET_ENOMEM;
-                }
-                target_grouplist = lock_user(VERIFY_READ, arg2,
-                                             gidsetsize * sizeof(target_id), 1);
+            if (gidsetsize) {
+                grouplist = alloca(gidsetsize * sizeof(gid_t));
+                target_grouplist = lock_user(VERIFY_READ, arg2, gidsetsize * sizeof(target_id), 1);
                 if (!target_grouplist) {
                     return -TARGET_EFAULT;
                 }
                 for (i = 0; i < gidsetsize; i++) {
                     grouplist[i] = low2highgid(tswapid(target_grouplist[i]));
                 }
-                unlock_user(target_grouplist, arg2,
-                            gidsetsize * sizeof(target_id));
+                unlock_user(target_grouplist, arg2, 0);
             }
             return get_errno(setgroups(gidsetsize, grouplist));
         }
@@ -11834,59 +11792,41 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
         {
             int gidsetsize = arg1;
             uint32_t *target_grouplist;
-            g_autofree gid_t *grouplist = NULL;
+            gid_t *grouplist;
             int i;
 
-            if (gidsetsize > NGROUPS_MAX) {
-                return -TARGET_EINVAL;
-            }
-            if (gidsetsize > 0) {
-                grouplist = g_try_new(gid_t, gidsetsize);
-                if (!grouplist) {
-                    return -TARGET_ENOMEM;
-                }
-            }
+            grouplist = alloca(gidsetsize * sizeof(gid_t));
             ret = get_errno(getgroups(gidsetsize, grouplist));
-            if (!is_error(ret) && gidsetsize > 0) {
-                target_grouplist = lock_user(VERIFY_WRITE, arg2,
-                                             gidsetsize * 4, 0);
+            if (gidsetsize == 0)
+                return ret;
+            if (!is_error(ret)) {
+                target_grouplist = lock_user(VERIFY_WRITE, arg2, gidsetsize * 4, 0);
                 if (!target_grouplist) {
                     return -TARGET_EFAULT;
                 }
-                for (i = 0; i < ret; i++) {
+                for(i = 0;i < ret; i++)
                     target_grouplist[i] = tswap32(grouplist[i]);
-                }
                 unlock_user(target_grouplist, arg2, gidsetsize * 4);
             }
-            return ret;
         }
+        return ret;
 #endif
 #ifdef TARGET_NR_setgroups32
     case TARGET_NR_setgroups32:
         {
             int gidsetsize = arg1;
             uint32_t *target_grouplist;
-            g_autofree gid_t *grouplist = NULL;
+            gid_t *grouplist;
             int i;
 
-            if (gidsetsize > NGROUPS_MAX || gidsetsize < 0) {
-                return -TARGET_EINVAL;
+            grouplist = alloca(gidsetsize * sizeof(gid_t));
+            target_grouplist = lock_user(VERIFY_READ, arg2, gidsetsize * 4, 1);
+            if (!target_grouplist) {
+                return -TARGET_EFAULT;
             }
-            if (gidsetsize > 0) {
-                grouplist = g_try_new(gid_t, gidsetsize);
-                if (!grouplist) {
-                    return -TARGET_ENOMEM;
-                }
-                target_grouplist = lock_user(VERIFY_READ, arg2,
-                                             gidsetsize * 4, 1);
-                if (!target_grouplist) {
-                    return -TARGET_EFAULT;
-                }
-                for (i = 0; i < gidsetsize; i++) {
-                    grouplist[i] = tswap32(target_grouplist[i]);
-                }
-                unlock_user(target_grouplist, arg2, 0);
-            }
+            for(i = 0;i < gidsetsize; i++)
+                grouplist[i] = tswap32(target_grouplist[i]);
+            unlock_user(target_grouplist, arg2, 0);
             return get_errno(setgroups(gidsetsize, grouplist));
         }
 #endif

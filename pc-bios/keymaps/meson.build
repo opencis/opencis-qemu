@@ -1,5 +1,5 @@
 keymaps = {
-  'ar': '-l ara',
+  'ar': '-l ar',
   'bepo': '-l fr -v dvorak',
   'cz': '-l cz',
   'da': '-l dk',

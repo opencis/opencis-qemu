@@ -67,11 +67,6 @@ typedef struct IGBTxPktVmdqCallbackContext {
     NetClientState *nc;
 } IGBTxPktVmdqCallbackContext;
 
-typedef struct L2Header {
-    struct eth_header eth;
-    struct vlan_header vlan;
-} L2Header;
-
 static ssize_t
 igb_receive_internal(IGBCore *core, const struct iovec *iov, int iovcnt,
                      bool has_vnet, bool *external_tx);
@@ -407,7 +402,7 @@ igb_tx_insert_vlan(IGBCore *core, uint16_t qn, struct igb_tx *tx,
         }
     }
 
-    if (insert_vlan) {
+    if (insert_vlan && e1000x_vlan_enabled(core->mac)) {
         net_tx_pkt_setup_vlan_header_ex(tx->tx_pkt, vlan,
             core->mac[VET] & 0xffff);
     }
@@ -543,8 +538,9 @@ igb_on_tx_done_update_stats(IGBCore *core, struct NetTxPkt *tx_pkt, int qn)
         g_assert_not_reached();
     }
 
-    e1000x_inc_reg_if_not_full(core->mac, GPTC);
-    e1000x_grow_8reg_if_not_full(core->mac, GOTCL, tot_len);
+    core->mac[GPTC] = core->mac[TPT];
+    core->mac[GOTCL] = core->mac[TOTL];
+    core->mac[GOTCH] = core->mac[TOTH];
 
     if (core->mac[MRQC] & 1) {
         uint16_t pool = qn % IGB_NUM_VM_POOLS;
@@ -965,16 +961,15 @@ igb_rx_is_oversized(IGBCore *core, uint16_t qn, size_t size)
     return size > (lpe ? max_ethernet_lpe_size : max_ethernet_vlan_size);
 }
 
-static uint16_t igb_receive_assign(IGBCore *core, const L2Header *l2_header,
+static uint16_t igb_receive_assign(IGBCore *core, const struct eth_header *ehdr,
                                    size_t size, E1000E_RSSInfo *rss_info,
                                    bool *external_tx)
 {
     static const int ta_shift[] = { 4, 3, 2, 0 };
-    const struct eth_header *ehdr = &l2_header->eth;
     uint32_t f, ra[2], *macp, rctl = core->mac[RCTL];
     uint16_t queues = 0;
     uint16_t oversized = 0;
-    uint16_t vid = be16_to_cpu(l2_header->vlan.h_tci) & VLAN_VID_MASK;
+    uint16_t vid = lduw_be_p(&PKT_GET_VLAN_HDR(ehdr)->h_tci) & VLAN_VID_MASK;
     bool accepted = false;
     int i;
 
@@ -1232,6 +1227,7 @@ igb_build_rx_metadata(IGBCore *core,
     struct virtio_net_hdr *vhdr;
     bool hasip4, hasip6;
     EthL4HdrProto l4hdr_proto;
+    uint32_t pkt_type;
 
     *status_flags = E1000_RXD_STAT_DD;
 
@@ -1270,29 +1266,28 @@ igb_build_rx_metadata(IGBCore *core,
         trace_e1000e_rx_metadata_ack();
     }
 
+    if (hasip6 && (core->mac[RFCTL] & E1000_RFCTL_IPV6_DIS)) {
+        trace_e1000e_rx_metadata_ipv6_filtering_disabled();
+        pkt_type = E1000_RXD_PKT_MAC;
+    } else if (l4hdr_proto == ETH_L4_HDR_PROTO_TCP ||
+               l4hdr_proto == ETH_L4_HDR_PROTO_UDP) {
+        pkt_type = hasip4 ? E1000_RXD_PKT_IP4_XDP : E1000_RXD_PKT_IP6_XDP;
+    } else if (hasip4 || hasip6) {
+        pkt_type = hasip4 ? E1000_RXD_PKT_IP4 : E1000_RXD_PKT_IP6;
+    } else {
+        pkt_type = E1000_RXD_PKT_MAC;
+    }
+
+    trace_e1000e_rx_metadata_pkt_type(pkt_type);
+
     if (pkt_info) {
-        *pkt_info = rss_info->enabled ? rss_info->type : 0;
-
-        if (hasip4) {
-            *pkt_info |= E1000_ADVRXD_PKT_IP4;
+        if (rss_info->enabled) {
+            *pkt_info = rss_info->type;
         }
 
-        if (hasip6) {
-            *pkt_info |= E1000_ADVRXD_PKT_IP6;
-        }
-
-        switch (l4hdr_proto) {
-        case ETH_L4_HDR_PROTO_TCP:
-            *pkt_info |= E1000_ADVRXD_PKT_TCP;
-            break;
-
-        case ETH_L4_HDR_PROTO_UDP:
-            *pkt_info |= E1000_ADVRXD_PKT_UDP;
-            break;
-
-        default:
-            break;
-        }
+        *pkt_info |= (pkt_type << 4);
+    } else {
+        *status_flags |= E1000_RXD_PKT_TYPE(pkt_type);
     }
 
     if (hdr_info) {
@@ -1443,17 +1438,29 @@ igb_write_to_rx_buffers(IGBCore *core,
 
 static void
 igb_update_rx_stats(IGBCore *core, const E1000E_RingInfo *rxi,
-                    size_t pkt_size, size_t pkt_fcs_size)
+                    size_t data_size, size_t data_fcs_size)
 {
-    eth_pkt_types_e pkt_type = net_rx_pkt_get_packet_type(core->rx_pkt);
-    e1000x_update_rx_total_stats(core->mac, pkt_type, pkt_size, pkt_fcs_size);
+    e1000x_update_rx_total_stats(core->mac, data_size, data_fcs_size);
+
+    switch (net_rx_pkt_get_packet_type(core->rx_pkt)) {
+    case ETH_PKT_BCAST:
+        e1000x_inc_reg_if_not_full(core->mac, BPRC);
+        break;
+
+    case ETH_PKT_MCAST:
+        e1000x_inc_reg_if_not_full(core->mac, MPRC);
+        break;
+
+    default:
+        break;
+    }
 
     if (core->mac[MRQC] & 1) {
         uint16_t pool = rxi->idx % IGB_NUM_VM_POOLS;
 
-        core->mac[PVFGORC0 + (pool * 64)] += pkt_size + 4;
+        core->mac[PVFGORC0 + (pool * 64)] += data_size + 4;
         core->mac[PVFGPRC0 + (pool * 64)]++;
-        if (pkt_type == ETH_PKT_MCAST) {
+        if (net_rx_pkt_get_packet_type(core->rx_pkt) == ETH_PKT_MCAST) {
             core->mac[PVFMPRC0 + (pool * 64)]++;
         }
     }
@@ -1595,13 +1602,14 @@ static ssize_t
 igb_receive_internal(IGBCore *core, const struct iovec *iov, int iovcnt,
                      bool has_vnet, bool *external_tx)
 {
+    static const int maximum_ethernet_hdr_len = (ETH_HLEN + 4);
+
     uint16_t queues = 0;
     uint32_t n = 0;
-    union {
-        L2Header l2_header;
-        uint8_t octets[ETH_ZLEN];
-    } buf;
+    uint8_t min_buf[ETH_ZLEN];
     struct iovec min_iov;
+    struct eth_header *ehdr;
+    uint8_t *filter_buf;
     size_t size, orig_size;
     size_t iov_ofs = 0;
     E1000E_RxRing rxr;
@@ -1627,21 +1635,24 @@ igb_receive_internal(IGBCore *core, const struct iovec *iov, int iovcnt,
         net_rx_pkt_unset_vhdr(core->rx_pkt);
     }
 
+    filter_buf = iov->iov_base + iov_ofs;
     orig_size = iov_size(iov, iovcnt);
     size = orig_size - iov_ofs;
 
     /* Pad to minimum Ethernet frame length */
-    if (size < sizeof(buf)) {
-        iov_to_buf(iov, iovcnt, iov_ofs, &buf, size);
-        memset(&buf.octets[size], 0, sizeof(buf) - size);
+    if (size < sizeof(min_buf)) {
+        iov_to_buf(iov, iovcnt, iov_ofs, min_buf, size);
+        memset(&min_buf[size], 0, sizeof(min_buf) - size);
         e1000x_inc_reg_if_not_full(core->mac, RUC);
-        min_iov.iov_base = &buf;
-        min_iov.iov_len = size = sizeof(buf);
+        min_iov.iov_base = filter_buf = min_buf;
+        min_iov.iov_len = size = sizeof(min_buf);
         iovcnt = 1;
         iov = &min_iov;
         iov_ofs = 0;
-    } else {
-        iov_to_buf(iov, iovcnt, iov_ofs, &buf, sizeof(buf.l2_header));
+    } else if (iov->iov_len < maximum_ethernet_hdr_len) {
+        /* This is very unlikely, but may happen. */
+        iov_to_buf(iov, iovcnt, iov_ofs, min_buf, maximum_ethernet_hdr_len);
+        filter_buf = min_buf;
     }
 
     /* Discard oversized packets if !LPE and !SBP. */
@@ -1649,12 +1660,11 @@ igb_receive_internal(IGBCore *core, const struct iovec *iov, int iovcnt,
         return orig_size;
     }
 
-    net_rx_pkt_set_packet_type(core->rx_pkt,
-                               get_eth_packet_type(&buf.l2_header.eth));
-    net_rx_pkt_set_protocols(core->rx_pkt, iov, iovcnt, iov_ofs);
+    ehdr = PKT_GET_ETH_HDR(filter_buf);
+    net_rx_pkt_set_packet_type(core->rx_pkt, get_eth_packet_type(ehdr));
+    net_rx_pkt_set_protocols(core->rx_pkt, filter_buf, size);
 
-    queues = igb_receive_assign(core, &buf.l2_header, size,
-                                &rss_info, external_tx);
+    queues = igb_receive_assign(core, ehdr, size, &rss_info, external_tx);
     if (!queues) {
         trace_e1000e_rx_flt_dropped();
         return orig_size;
@@ -2454,16 +2464,16 @@ igb_set_ims(IGBCore *core, int index, uint32_t val)
 static void igb_commit_icr(IGBCore *core)
 {
     /*
-     * If GPIE.NSICR = 0, then the clear of IMS will occur only if at
+     * If GPIE.NSICR = 0, then the copy of IAM to IMS will occur only if at
      * least one bit is set in the IMS and there is a true interrupt as
      * reflected in ICR.INTA.
      */
     if ((core->mac[GPIE] & E1000_GPIE_NSICR) ||
         (core->mac[IMS] && (core->mac[ICR] & E1000_ICR_INT_ASSERTED))) {
-        igb_clear_ims_bits(core, core->mac[IAM]);
+        igb_set_ims(core, IMS, core->mac[IAM]);
+    } else {
+        igb_update_interrupt_state(core);
     }
-
-    igb_update_interrupt_state(core);
 }
 
 static void igb_set_icr(IGBCore *core, int index, uint32_t val)

@@ -13,7 +13,6 @@
 
 #include <linux/kvm.h>
 
-#include "qemu/units.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "sysemu/kvm.h"
@@ -116,7 +115,7 @@ static void *s390_pv_do_unprot_async_fn(void *p)
      return NULL;
 }
 
-bool s390_pv_vm_try_disable_async(S390CcwMachineState *ms)
+bool s390_pv_vm_try_disable_async(void)
 {
     /*
      * t is only needed to create the thread; once qemu_thread_create
@@ -124,12 +123,7 @@ bool s390_pv_vm_try_disable_async(S390CcwMachineState *ms)
      */
     QemuThread t;
 
-    /*
-     * If the feature is not present or if the VM is not larger than 2 GiB,
-     * KVM_PV_ASYNC_CLEANUP_PREPARE fill fail; no point in attempting it.
-     */
-    if ((MACHINE(ms)->maxram_size <= 2 * GiB) ||
-        !kvm_check_extension(kvm_state, KVM_CAP_S390_PROTECTED_ASYNC_DISABLE)) {
+    if (!kvm_check_extension(kvm_state, KVM_CAP_S390_PROTECTED_ASYNC_DISABLE)) {
         return false;
     }
     if (s390_pv_cmd(KVM_PV_ASYNC_CLEANUP_PREPARE, NULL) != 0) {

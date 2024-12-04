@@ -98,34 +98,20 @@ static void smmuv3_write_gerrorn(SMMUv3State *s, uint32_t new_gerrorn)
     trace_smmuv3_write_gerrorn(toggled & pending, s->gerrorn);
 }
 
-static inline MemTxResult queue_read(SMMUQueue *q, Cmd *cmd)
+static inline MemTxResult queue_read(SMMUQueue *q, void *data)
 {
     dma_addr_t addr = Q_CONS_ENTRY(q);
-    MemTxResult ret;
-    int i;
 
-    ret = dma_memory_read(&address_space_memory, addr, cmd, sizeof(Cmd),
-                          MEMTXATTRS_UNSPECIFIED);
-    if (ret != MEMTX_OK) {
-        return ret;
-    }
-    for (i = 0; i < ARRAY_SIZE(cmd->word); i++) {
-        le32_to_cpus(&cmd->word[i]);
-    }
-    return ret;
+    return dma_memory_read(&address_space_memory, addr, data, q->entry_size,
+                           MEMTXATTRS_UNSPECIFIED);
 }
 
-static MemTxResult queue_write(SMMUQueue *q, Evt *evt_in)
+static MemTxResult queue_write(SMMUQueue *q, void *data)
 {
     dma_addr_t addr = Q_PROD_ENTRY(q);
     MemTxResult ret;
-    Evt evt = *evt_in;
-    int i;
 
-    for (i = 0; i < ARRAY_SIZE(evt.word); i++) {
-        cpu_to_le32s(&evt.word[i]);
-    }
-    ret = dma_memory_write(&address_space_memory, addr, &evt, sizeof(Evt),
+    ret = dma_memory_write(&address_space_memory, addr, data, q->entry_size,
                            MEMTXATTRS_UNSPECIFIED);
     if (ret != MEMTX_OK) {
         return ret;
@@ -305,7 +291,7 @@ static void smmuv3_init_regs(SMMUv3State *s)
 static int smmu_get_ste(SMMUv3State *s, dma_addr_t addr, STE *buf,
                         SMMUEventInfo *event)
 {
-    int ret, i;
+    int ret;
 
     trace_smmuv3_get_ste(addr);
     /* TODO: guarantee 64-bit single-copy atomicity */
@@ -318,9 +304,6 @@ static int smmu_get_ste(SMMUv3State *s, dma_addr_t addr, STE *buf,
         event->u.f_ste_fetch.addr = addr;
         return -EINVAL;
     }
-    for (i = 0; i < ARRAY_SIZE(buf->word); i++) {
-        le32_to_cpus(&buf->word[i]);
-    }
     return 0;
 
 }
@@ -330,7 +313,7 @@ static int smmu_get_cd(SMMUv3State *s, STE *ste, uint32_t ssid,
                        CD *buf, SMMUEventInfo *event)
 {
     dma_addr_t addr = STE_CTXPTR(ste);
-    int ret, i;
+    int ret;
 
     trace_smmuv3_get_cd(addr);
     /* TODO: guarantee 64-bit single-copy atomicity */
@@ -342,9 +325,6 @@ static int smmu_get_cd(SMMUv3State *s, STE *ste, uint32_t ssid,
         event->type = SMMU_EVT_F_CD_FETCH;
         event->u.f_ste_fetch.addr = addr;
         return -EINVAL;
-    }
-    for (i = 0; i < ARRAY_SIZE(buf->word); i++) {
-        le32_to_cpus(&buf->word[i]);
     }
     return 0;
 }
@@ -427,7 +407,7 @@ static int smmu_find_ste(SMMUv3State *s, uint32_t sid, STE *ste,
         return -EINVAL;
     }
     if (s->features & SMMU_FEATURE_2LVL_STE) {
-        int l1_ste_offset, l2_ste_offset, max_l2_ste, span, i;
+        int l1_ste_offset, l2_ste_offset, max_l2_ste, span;
         dma_addr_t l1ptr, l2ptr;
         STEDesc l1std;
 
@@ -450,9 +430,6 @@ static int smmu_find_ste(SMMUv3State *s, uint32_t sid, STE *ste,
             event->type = SMMU_EVT_F_STE_FETCH;
             event->u.f_ste_fetch.addr = l1ptr;
             return -EINVAL;
-        }
-        for (i = 0; i < ARRAY_SIZE(l1std.word); i++) {
-            le32_to_cpus(&l1std.word[i]);
         }
 
         span = L1STD_SPAN(&l1std);

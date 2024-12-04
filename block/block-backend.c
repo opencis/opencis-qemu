@@ -2018,15 +2018,7 @@ void blk_activate(BlockBackend *blk, Error **errp)
         return;
     }
 
-    /*
-     * Migration code can call this function in coroutine context, so leave
-     * coroutine context if necessary.
-     */
-    if (qemu_in_coroutine()) {
-        bdrv_co_activate(bs, errp);
-    } else {
-        bdrv_activate(bs, errp);
-    }
+    bdrv_activate(bs, errp);
 }
 
 bool coroutine_fn blk_co_is_inserted(BlockBackend *blk)

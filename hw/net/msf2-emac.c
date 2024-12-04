@@ -118,18 +118,14 @@ static void emac_load_desc(MSF2EmacState *s, EmacDesc *d, hwaddr desc)
     d->next = le32_to_cpu(d->next);
 }
 
-static void emac_store_desc(MSF2EmacState *s, const EmacDesc *d, hwaddr desc)
+static void emac_store_desc(MSF2EmacState *s, EmacDesc *d, hwaddr desc)
 {
-    EmacDesc outd;
-    /*
-     * Convert from host endianness into LE. We use a local struct because
-     * calling code may still want to look at the fields afterwards.
-     */
-    outd.pktaddr = cpu_to_le32(d->pktaddr);
-    outd.pktsize = cpu_to_le32(d->pktsize);
-    outd.next = cpu_to_le32(d->next);
+    /* Convert from host endianness into LE. */
+    d->pktaddr = cpu_to_le32(d->pktaddr);
+    d->pktsize = cpu_to_le32(d->pktsize);
+    d->next = cpu_to_le32(d->next);
 
-    address_space_write(&s->dma_as, desc, MEMTXATTRS_UNSPECIFIED, &outd, sizeof outd);
+    address_space_write(&s->dma_as, desc, MEMTXATTRS_UNSPECIFIED, d, sizeof *d);
 }
 
 static void msf2_dma_tx(MSF2EmacState *s)

@@ -117,9 +117,8 @@ static void arm_kernel_cmpxchg32_helper(CPUARMState *env)
 {
     uint32_t oldval, newval, val, addr, cpsr, *host_addr;
 
-    /* Swap if host != guest endianness, for the host cmpxchg below */
-    oldval = tswap32(env->regs[0]);
-    newval = tswap32(env->regs[1]);
+    oldval = env->regs[0];
+    newval = env->regs[1];
     addr = env->regs[2];
 
     mmap_lock();
@@ -174,10 +173,6 @@ static void arm_kernel_cmpxchg64_helper(CPUARMState *env)
         mmap_unlock();
         return;
     }
-
-    /* Swap if host != guest endianness, for the host cmpxchg below */
-    oldval = tswap64(oldval);
-    newval = tswap64(newval);
 
 #ifdef CONFIG_ATOMIC64
     val = qatomic_cmpxchg__nocheck(host_addr, oldval, newval);

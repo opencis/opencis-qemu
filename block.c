@@ -680,7 +680,7 @@ int coroutine_fn bdrv_co_create_opts_simple(BlockDriver *drv,
 
     ret = 0;
 out:
-    blk_co_unref(blk);
+    blk_unref(blk);
     return ret;
 }
 

@@ -153,22 +153,12 @@ void blockdev_mark_auto_del(BlockBackend *blk)
 
     JOB_LOCK_GUARD();
 
-    do {
-        job = block_job_next_locked(NULL);
-        while (job && (job->job.cancelled ||
-                       job->job.deferred_to_main_loop ||
-                       !block_job_has_bdrv(job, blk_bs(blk))))
-        {
-            job = block_job_next_locked(job);
-        }
-        if (job) {
-            /*
-             * This drops the job lock temporarily and polls, so we need to
-             * restart processing the list from the start after this.
-             */
+    for (job = block_job_next_locked(NULL); job;
+         job = block_job_next_locked(job)) {
+        if (block_job_has_bdrv(job, blk_bs(blk))) {
             job_cancel_locked(&job->job, false);
         }
-    } while (job);
+    }
 
     dinfo->auto_del = 1;
 }
@@ -2440,7 +2430,7 @@ void coroutine_fn qmp_block_resize(const char *device, const char *node_name,
         return;
     }
 
-    blk = blk_co_new_with_bs(bs, BLK_PERM_RESIZE, BLK_PERM_ALL, errp);
+    blk = blk_new_with_bs(bs, BLK_PERM_RESIZE, BLK_PERM_ALL, errp);
     if (!blk) {
         return;
     }
@@ -2455,7 +2445,7 @@ void coroutine_fn qmp_block_resize(const char *device, const char *node_name,
 
     bdrv_co_lock(bs);
     bdrv_drained_end(bs);
-    blk_co_unref(blk);
+    blk_unref(blk);
     bdrv_co_unlock(bs);
 }
 

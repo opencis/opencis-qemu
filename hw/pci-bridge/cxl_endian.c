@@ -13,7 +13,6 @@
 
 #include "hw/cxl/cxl_endian.h"
 
-#ifndef ntohll
 uint64_t ntohll(uint64_t netllong)
 {
     return ((netllong & 0xFF) << 56) | ((netllong & 0xFF00) << 40) |
@@ -23,11 +22,8 @@ uint64_t ntohll(uint64_t netllong)
            ((netllong & 0xFF000000000000) >> 40) |
            ((netllong & 0xFF00000000000000) >> 56);
 }
-#endif
 
-#ifndef htonll
 uint64_t htonll(uint64_t hllong)
 {
     return ntohll(hllong);
 }
-#endif

@@ -321,7 +321,6 @@ struct AHCIDevice {
     bool init_d2h_sent;
     AHCICmdHdr *cur_cmd;
     NCQTransferState ncq_tfs[AHCI_MAX_CMDS];
-    MemReentrancyGuard mem_reentrancy_guard;
 };
 
 struct AHCIPCIState {

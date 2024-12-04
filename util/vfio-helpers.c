@@ -106,17 +106,15 @@ struct QEMUVFIOState {
  */
 static char *sysfs_find_group_file(const char *device, Error **errp)
 {
-    g_autoptr(GError) gerr = NULL;
     char *sysfs_link;
     char *sysfs_group;
     char *p;
     char *path = NULL;
 
     sysfs_link = g_strdup_printf("/sys/bus/pci/devices/%s/iommu_group", device);
-    sysfs_group = g_file_read_link(sysfs_link, &gerr);
-    if (gerr) {
-        error_setg(errp, "Failed to find iommu group sysfs path: %s",
-                   gerr->message);
+    sysfs_group = g_malloc0(PATH_MAX);
+    if (readlink(sysfs_link, sysfs_group, PATH_MAX - 1) == -1) {
+        error_setg_errno(errp, errno, "Failed to find iommu group sysfs path");
         goto out;
     }
     p = strrchr(sysfs_group, '/');

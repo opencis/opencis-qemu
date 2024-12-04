@@ -1504,7 +1504,7 @@ static void nvme_post_cqes(void *opaque)
         req->cqe.status = cpu_to_le16((req->status << 1) | cq->phase);
         req->cqe.sq_id = cpu_to_le16(sq->sqid);
         req->cqe.sq_head = cpu_to_le16(sq->head);
-        addr = cq->dma_addr + (cq->tail << NVME_CQES);
+        addr = cq->dma_addr + cq->tail * n->cqe_size;
         ret = pci_dma_write(PCI_DEVICE(n), addr, (void *)&req->cqe,
                             sizeof(req->cqe));
         if (ret) {
@@ -4333,13 +4333,7 @@ static uint16_t nvme_io_mgmt_send_ruh_update(NvmeCtrl *n, NvmeRequest *req)
     uint32_t npid = (cdw10 >> 1) + 1;
     unsigned int i = 0;
     g_autofree uint16_t *pids = NULL;
-    uint32_t maxnpid;
-
-    if (!ns->endgrp || !ns->endgrp->fdp.enabled) {
-        return NVME_FDP_DISABLED | NVME_DNR;
-    }
-
-    maxnpid = n->subsys->endgrp.fdp.nrg * n->subsys->endgrp.fdp.nruh;
+    uint32_t maxnpid = n->subsys->endgrp.fdp.nrg * n->subsys->endgrp.fdp.nruh;
 
     if (unlikely(npid >= MIN(NVME_FDP_MAXPIDS, maxnpid))) {
         return NVME_INVALID_FIELD | NVME_DNR;
@@ -4613,8 +4607,7 @@ static void nvme_init_sq(NvmeSQueue *sq, NvmeCtrl *n, uint64_t dma_addr,
         QTAILQ_INSERT_TAIL(&(sq->req_list), &sq->io_req[i], entry);
     }
 
-    sq->bh = qemu_bh_new_guarded(nvme_process_sq, sq,
-                                 &DEVICE(sq->ctrl)->mem_reentrancy_guard);
+    sq->bh = qemu_bh_new(nvme_process_sq, sq);
 
     if (n->dbbuf_enabled) {
         sq->db_addr = n->dbbuf_dbs + (sqid << 3);
@@ -5098,11 +5091,6 @@ static uint16_t nvme_fdp_events(NvmeCtrl *n, uint32_t endgrpid,
     }
 
     log_size = sizeof(NvmeFdpEventsLog) + ebuf->nelems * sizeof(NvmeFdpEvent);
-
-    if (off >= log_size) {
-        return NVME_INVALID_FIELD | NVME_DNR;
-    }
-
     trans_len = MIN(log_size - off, buf_len);
     elog = g_malloc0(log_size);
     elog->num_events = cpu_to_le32(ebuf->nelems);
@@ -5265,8 +5253,7 @@ static void nvme_init_cq(NvmeCQueue *cq, NvmeCtrl *n, uint64_t dma_addr,
         }
     }
     n->cq[cqid] = cq;
-    cq->bh = qemu_bh_new_guarded(nvme_post_cqes, cq,
-                                 &DEVICE(cq->ctrl)->mem_reentrancy_guard);
+    cq->bh = qemu_bh_new(nvme_post_cqes, cq);
 }
 
 static uint16_t nvme_create_cq(NvmeCtrl *n, NvmeRequest *req)
@@ -5278,17 +5265,9 @@ static uint16_t nvme_create_cq(NvmeCtrl *n, NvmeRequest *req)
     uint16_t qsize = le16_to_cpu(c->qsize);
     uint16_t qflags = le16_to_cpu(c->cq_flags);
     uint64_t prp1 = le64_to_cpu(c->prp1);
-    uint32_t cc = ldq_le_p(&n->bar.cc);
-    uint8_t iocqes = NVME_CC_IOCQES(cc);
-    uint8_t iosqes = NVME_CC_IOSQES(cc);
 
     trace_pci_nvme_create_cq(prp1, cqid, vector, qsize, qflags,
                              NVME_CQ_FLAGS_IEN(qflags) != 0);
-
-    if (iosqes != NVME_SQES || iocqes != NVME_CQES) {
-        trace_pci_nvme_err_invalid_create_cq_entry_size(iosqes, iocqes);
-        return NVME_MAX_QSIZE_EXCEEDED | NVME_DNR;
-    }
 
     if (unlikely(!cqid || cqid > n->conf_ioqpairs || n->cq[cqid] != NULL)) {
         trace_pci_nvme_err_invalid_create_cq_cqid(cqid);
@@ -6788,7 +6767,6 @@ static uint16_t nvme_dbbuf_config(NvmeCtrl *n, const NvmeRequest *req)
     PCIDevice *pci = PCI_DEVICE(n);
     uint64_t dbs_addr = le64_to_cpu(req->cmd.dptr.prp1);
     uint64_t eis_addr = le64_to_cpu(req->cmd.dptr.prp2);
-    uint32_t v;
     int i;
 
     /* Address should be page aligned */
@@ -6806,8 +6784,6 @@ static uint16_t nvme_dbbuf_config(NvmeCtrl *n, const NvmeRequest *req)
         NvmeCQueue *cq = n->cq[i];
 
         if (sq) {
-            v = cpu_to_le32(sq->tail);
-
             /*
              * CAP.DSTRD is 0, so offset of ith sq db_addr is (i<<3)
              * nvme_process_db() uses this hard-coded way to calculate
@@ -6815,7 +6791,7 @@ static uint16_t nvme_dbbuf_config(NvmeCtrl *n, const NvmeRequest *req)
              */
             sq->db_addr = dbs_addr + (i << 3);
             sq->ei_addr = eis_addr + (i << 3);
-            pci_dma_write(pci, sq->db_addr, &v, sizeof(sq->tail));
+            pci_dma_write(pci, sq->db_addr, &sq->tail, sizeof(sq->tail));
 
             if (n->params.ioeventfd && sq->sqid != 0) {
                 if (!nvme_init_sq_ioeventfd(sq)) {
@@ -6825,12 +6801,10 @@ static uint16_t nvme_dbbuf_config(NvmeCtrl *n, const NvmeRequest *req)
         }
 
         if (cq) {
-            v = cpu_to_le32(cq->head);
-
             /* CAP.DSTRD is 0, so offset of ith cq db_addr is (i<<3)+(1<<2) */
             cq->db_addr = dbs_addr + (i << 3) + (1 << 2);
             cq->ei_addr = eis_addr + (i << 3) + (1 << 2);
-            pci_dma_write(pci, cq->db_addr, &v, sizeof(cq->head));
+            pci_dma_write(pci, cq->db_addr, &cq->head, sizeof(cq->head));
 
             if (n->params.ioeventfd && cq->cqid != 0) {
                 if (!nvme_init_cq_ioeventfd(cq)) {
@@ -6883,7 +6857,7 @@ static uint16_t nvme_directive_receive(NvmeCtrl *n, NvmeRequest *req)
     case NVME_DIRECTIVE_IDENTIFY:
         switch (doper) {
         case NVME_DIRECTIVE_RETURN_PARAMS:
-            if (ns->endgrp && ns->endgrp->fdp.enabled) {
+            if (ns->endgrp->fdp.enabled) {
                 id.supported |= 1 << NVME_DIRECTIVE_DATA_PLACEMENT;
                 id.enabled |= 1 << NVME_DIRECTIVE_DATA_PLACEMENT;
                 id.persistent |= 1 << NVME_DIRECTIVE_DATA_PLACEMENT;
@@ -6995,7 +6969,7 @@ static void nvme_process_sq(void *opaque)
     }
 
     while (!(nvme_sq_empty(sq) || QTAILQ_EMPTY(&sq->req_list))) {
-        addr = sq->dma_addr + (sq->head << NVME_SQES);
+        addr = sq->dma_addr + sq->head * n->sqe_size;
         if (nvme_addr_read(n, addr, (void *)&cmd, sizeof(cmd))) {
             trace_pci_nvme_err_addr_read(addr);
             trace_pci_nvme_err_cfs();
@@ -7222,6 +7196,34 @@ static int nvme_start_ctrl(NvmeCtrl *n)
                     NVME_CAP_MPSMAX(cap));
         return -1;
     }
+    if (unlikely(NVME_CC_IOCQES(cc) <
+                 NVME_CTRL_CQES_MIN(n->id_ctrl.cqes))) {
+        trace_pci_nvme_err_startfail_cqent_too_small(
+                    NVME_CC_IOCQES(cc),
+                    NVME_CTRL_CQES_MIN(cap));
+        return -1;
+    }
+    if (unlikely(NVME_CC_IOCQES(cc) >
+                 NVME_CTRL_CQES_MAX(n->id_ctrl.cqes))) {
+        trace_pci_nvme_err_startfail_cqent_too_large(
+                    NVME_CC_IOCQES(cc),
+                    NVME_CTRL_CQES_MAX(cap));
+        return -1;
+    }
+    if (unlikely(NVME_CC_IOSQES(cc) <
+                 NVME_CTRL_SQES_MIN(n->id_ctrl.sqes))) {
+        trace_pci_nvme_err_startfail_sqent_too_small(
+                    NVME_CC_IOSQES(cc),
+                    NVME_CTRL_SQES_MIN(cap));
+        return -1;
+    }
+    if (unlikely(NVME_CC_IOSQES(cc) >
+                 NVME_CTRL_SQES_MAX(n->id_ctrl.sqes))) {
+        trace_pci_nvme_err_startfail_sqent_too_large(
+                    NVME_CC_IOSQES(cc),
+                    NVME_CTRL_SQES_MAX(cap));
+        return -1;
+    }
     if (unlikely(!NVME_AQA_ASQS(aqa))) {
         trace_pci_nvme_err_startfail_asqent_sz_zero();
         return -1;
@@ -7234,6 +7236,8 @@ static int nvme_start_ctrl(NvmeCtrl *n)
     n->page_bits = page_bits;
     n->page_size = page_size;
     n->max_prp_ents = n->page_size / sizeof(uint64_t);
+    n->cqe_size = 1 << NVME_CC_IOCQES(cc);
+    n->sqe_size = 1 << NVME_CC_IOSQES(cc);
     nvme_init_cq(&n->admin_cq, n, acq, 0, 0, NVME_AQA_ACQS(aqa) + 1, 1);
     nvme_init_sq(&n->admin_sq, n, asq, 0, 0, NVME_AQA_ASQS(aqa) + 1);
 
@@ -7551,7 +7555,7 @@ static uint64_t nvme_mmio_read(void *opaque, hwaddr addr, unsigned size)
 static void nvme_process_db(NvmeCtrl *n, hwaddr addr, int val)
 {
     PCIDevice *pci = PCI_DEVICE(n);
-    uint32_t qid, v;
+    uint32_t qid;
 
     if (unlikely(addr & ((1 << 2) - 1))) {
         NVME_GUEST_ERR(pci_nvme_ub_db_wr_misaligned,
@@ -7618,8 +7622,7 @@ static void nvme_process_db(NvmeCtrl *n, hwaddr addr, int val)
         start_sqs = nvme_cq_full(cq) ? 1 : 0;
         cq->head = new_head;
         if (!qid && n->dbbuf_enabled) {
-            v = cpu_to_le32(cq->head);
-            pci_dma_write(pci, cq->db_addr, &v, sizeof(cq->head));
+            pci_dma_write(pci, cq->db_addr, &cq->head, sizeof(cq->head));
         }
         if (start_sqs) {
             NvmeSQueue *sq;
@@ -7679,8 +7682,6 @@ static void nvme_process_db(NvmeCtrl *n, hwaddr addr, int val)
 
         sq->tail = new_tail;
         if (!qid && n->dbbuf_enabled) {
-            v = cpu_to_le32(sq->tail);
-
             /*
              * The spec states "the host shall also update the controller's
              * corresponding doorbell property to match the value of that entry
@@ -7694,7 +7695,7 @@ static void nvme_process_db(NvmeCtrl *n, hwaddr addr, int val)
              * including ones that run on Linux, are not updating Admin Queues,
              * so we can't trust reading it for an appropriate sq tail.
              */
-            pci_dma_write(pci, sq->db_addr, &v, sizeof(sq->tail));
+            pci_dma_write(pci, sq->db_addr, &sq->tail, sizeof(sq->tail));
         }
 
         qemu_bh_schedule(sq->bh);
@@ -8205,8 +8206,8 @@ static void nvme_init_ctrl(NvmeCtrl *n, PCIDevice *pci_dev)
     id->wctemp = cpu_to_le16(NVME_TEMPERATURE_WARNING);
     id->cctemp = cpu_to_le16(NVME_TEMPERATURE_CRITICAL);
 
-    id->sqes = (NVME_SQES << 4) | NVME_SQES;
-    id->cqes = (NVME_CQES << 4) | NVME_CQES;
+    id->sqes = (0x6 << 4) | 0x6;
+    id->cqes = (0x4 << 4) | 0x4;
     id->nn = cpu_to_le32(NVME_MAX_NAMESPACES);
     id->oncs = cpu_to_le16(NVME_ONCS_WRITE_ZEROES | NVME_ONCS_TIMESTAMP |
                            NVME_ONCS_FEATURES | NVME_ONCS_DSM |

@@ -45,12 +45,7 @@ static uint32_t update_counter(NRF51TimerState *s, int64_t now)
     uint32_t ticks = ns_to_ticks(s, now - s->update_counter_ns);
 
     s->counter = (s->counter + ticks) % BIT(bitwidths[s->bitmode]);
-    /*
-     * Only advance the sync time to the timestamp of the last tick,
-     * not all the way to 'now', so we don't lose time if we do
-     * multiple resyncs in a single tick.
-     */
-    s->update_counter_ns += ticks_to_ns(s, ticks);
+    s->update_counter_ns = now;
     return ticks;
 }
 
