@@ -1,7 +1,7 @@
 /*
  * QEMU CXL Host HCOH Configuration
  *
- * Copyright (c) 2024 EEUM, Inc.
+ * Copyright (c) 2025 EEUM, Inc.
  *
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.

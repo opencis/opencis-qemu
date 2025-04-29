@@ -1,7 +1,7 @@
 /*
- * QEMU CXL Host Type2 HCOH Implementation
+ * QEMU CXL Host Type3 HCOH Implementation
  *
- * Copyright (c) 2024 EEUM, Inc.
+ * Copyright (c) 2025 EEUM, Inc.
  *
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
@@ -16,7 +16,7 @@
 
 static HostCoh *hcoh;
 static Cache *hcache;
-QemuSpin ct2d_lock;
+static QemuSpin ct2d_lock;
 
 static GRand *rng_opc;
 static GRand *rng_addr;
