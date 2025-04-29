@@ -16,7 +16,7 @@
 
 static HostCoh *hcoh;
 static Cache *hcache;
-QemuSpin ct2d_lock;
+static QemuSpin ct2d_lock;
 
 static GRand *rng_opc;
 static GRand *rng_addr;

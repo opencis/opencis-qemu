@@ -7,6 +7,7 @@ softmmu_ss.add(when: 'CONFIG_CXL',
                    'cxl-cdat.c',
                    'cxl_type1_hcoh.c',
                    'cxl_type2_hcoh.c',
+                   'cxl_type3_hcoh.c',
                    'cxl_hcache.c',
                ),
                if_false: files(
