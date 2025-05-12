@@ -12,9 +12,9 @@
 
 #include "trace/trace-hw_cxl.h"
 
-#define CFMWS_BASE_ADDR (0x490000000)
-#define HOST_BIAS_TABLE_SIZE (2)
-#define HOST_BIAS_ENTRY_SIZE (0x8000000)
+#define CFMWS_BASE_ADDR 0x490000000
+#define HOST_BIAS_TABLE_SIZE 2
+#define HOST_BIAS_ENTRY_SIZE 0x8000000
 
 typedef struct {
     uint32_t *bias_table;
