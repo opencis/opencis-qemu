@@ -14,9 +14,11 @@
 #include "hw/cxl/cxl_hcache.h"
 #include "hw/cxl/cxl_type2_hcoh.h"
 
+// Shared with cxl_type2_dcoh.c
+QemuSpin ct2d_lock;
+
 static HostCoh *hcoh;
 static Cache *hcache;
-static QemuSpin ct2d_lock;
 
 static GRand *rng_opc;
 static GRand *rng_addr;

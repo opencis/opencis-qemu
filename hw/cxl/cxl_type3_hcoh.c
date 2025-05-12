@@ -16,7 +16,7 @@
 
 static HostCoh *hcoh;
 static Cache *hcache;
-static QemuSpin ct2d_lock;
+static QemuSpin ct3d_lock;
 
 static GRand *rng_opc;
 static GRand *rng_addr;
@@ -131,7 +131,7 @@ MemTxResult cxl_host_type3_hcoh_read(PCIDevice *d, uint64_t haddr,
     uint64_t cur_cb_addr = haddr & ~(HOST_BLKSIZE - 1);
     uint64_t next_cb_addr = (haddr + size - 1) & ~(HOST_BLKSIZE - 1);
 
-    qemu_spin_lock(&ct2d_lock);
+    qemu_spin_lock(&ct3d_lock);
     // CXL_THREAD("host hcache lock");
 
     if (cur_cb_addr != next_cb_addr) {
@@ -154,7 +154,7 @@ MemTxResult cxl_host_type3_hcoh_read(PCIDevice *d, uint64_t haddr,
 
 out:
     // CXL_THREAD("host hcache unlock");
-    qemu_spin_unlock(&ct2d_lock);
+    qemu_spin_unlock(&ct3d_lock);
 
     return result;
 }
@@ -167,7 +167,7 @@ MemTxResult cxl_host_type3_hcoh_write(PCIDevice *d, uint64_t haddr,
     uint64_t cur_cb_addr = haddr & ~(HOST_BLKSIZE - 1);
     uint64_t next_cb_addr = (haddr + size - 1) & ~(HOST_BLKSIZE - 1);
 
-    qemu_spin_lock(&ct2d_lock);
+    qemu_spin_lock(&ct3d_lock);
     // CXL_THREAD("host hcache lock");
 
     if (cur_cb_addr != next_cb_addr) {
@@ -192,7 +192,7 @@ MemTxResult cxl_host_type3_hcoh_write(PCIDevice *d, uint64_t haddr,
 
 out:
     // CXL_THREAD("host hcache unlock");
-    qemu_spin_unlock(&ct2d_lock);
+    qemu_spin_unlock(&ct3d_lock);
 
     return result;
 }
@@ -206,7 +206,7 @@ void cxl_host_type3_hcoh_init(PCIDevice *d)
     rng_addr = g_rand_new();
     rng_size = g_rand_new();
 
-    CXL_DEBUG("ct2 host hcoh realized");
+    CXL_DEBUG("ct3 host hcoh realized");
 }
 
 void cxl_host_type3_hcoh_release(void)
@@ -214,5 +214,5 @@ void cxl_host_type3_hcoh_release(void)
     __host_hcoh_free(hcoh);
     cxl_host_cache_release(&hcache);
 
-    CXL_DEBUG("ct2 host hcoh released");
+    CXL_DEBUG("ct3 host hcoh released");
 }
