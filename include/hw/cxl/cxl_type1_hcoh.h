@@ -10,7 +10,7 @@
 #ifndef CXL_TYPE1_HCOH_H
 #define CXL_TYPE1_HCOH_H
 
-#define CFMWS_BASE_ADDR (0x490000000)
+#include "hw/cxl/cxl_hcoh.h"
 
 BiasState cxl_host_type1_hcoh_bias_lookup(uint64_t haddr);
 MemTxResult cxl_host_type1_hcoh_read(PCIDevice *d, uint64_t haddr,

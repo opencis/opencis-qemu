@@ -12,8 +12,7 @@
 
 #include "hw/cxl/cxl_hcache.h"
 #include "hw/cxl/cxl.h"
-#include "hw/cxl/cxl_type1_hcoh.h"
-#include "hw/cxl/cxl_type2_hcoh.h"
+#include "hw/cxl/cxl_hcoh.h"
 
 static void __host_cache_priority_init(Cache *cache)
 {

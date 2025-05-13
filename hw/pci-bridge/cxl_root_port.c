@@ -27,6 +27,7 @@
 #include "hw/sysbus.h"
 #include "qapi/error.h"
 #include "hw/cxl/cxl.h"
+#include "hw/cxl/cxl_type3_hcoh.h"
 #include "hw/cxl/cxl_emulator_packet.h"
 #include "hw/cxl/cxl_socket_transport.h"
 #include "trace.h"
@@ -569,6 +570,8 @@ static void cxl_rp_realize(DeviceState *dev, Error **errp)
     Error *local_err = NULL;
 
     trace_cxl_root_debug_message("Realizing CXLRootPort Class instance");
+
+    cxl_host_type3_hcoh_init(pci_dev);
 
     rpc->parent_realize(dev, &local_err);
     if (local_err) {

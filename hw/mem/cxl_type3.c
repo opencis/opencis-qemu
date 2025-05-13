@@ -15,6 +15,7 @@
 #include "sysemu/hostmem.h"
 #include "sysemu/numa.h"
 #include "hw/cxl/cxl.h"
+#include "hw/cxl/cxl_type3_hcoh.h"
 #include "hw/pci/msix.h"
 #include "trace.h"
 
@@ -565,6 +566,8 @@ static void ct3_realize(PCIDevice *pci_dev, Error **errp)
     cxl_cstate->cdat.private = ct3d;
     cxl_doe_cdat_init(cxl_cstate, errp);
 
+    cxl_host_type3_hcoh_init(pci_dev);
+
     pcie_cap_deverr_init(pci_dev);
     /* Leave a bit of room for expansion */
     rc = pcie_aer_init(pci_dev, PCI_ERR_VER, 0x200, PCI_ERR_SIZEOF, NULL);
@@ -587,6 +590,9 @@ static void ct3_exit(PCIDevice *pci_dev)
 
     pcie_aer_exit(pci_dev);
     cxl_doe_cdat_release(cxl_cstate);
+
+    cxl_host_type3_hcoh_release();
+
     g_free(regs->special_ops);
     address_space_destroy(&ct3d->hostmem_as);
 }
