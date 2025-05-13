@@ -18,6 +18,7 @@
 #include "hw/cxl/cxl_host.h"
 #include "hw/cxl/cxl_type1_hcoh.h"
 #include "hw/cxl/cxl_type2_hcoh.h"
+#include "hw/cxl/cxl_type3_hcoh.h"
 #include "hw/pci/pci_bus.h"
 #include "hw/pci/pci_bridge.h"
 #include "hw/pci/pci_host.h"
@@ -216,8 +217,7 @@ static MemTxResult cxl_read_cfmws(void *opaque, hwaddr addr, uint64_t *data,
     }
 
     if (cxl_is_remote_root_port(d)) {
-        result = cxl_remote_cxl_mem_read_with_cache(d, addr + fw->base, data,
-                                                    size, attrs);
+        result = cxl_host_type3_hcoh_read(d, addr + fw->base, data, size, attrs);
         trace_cxl_read_cfmws("CXL.mem via RP", addr, size, *data);
     } else {
         type = object_get_typename(OBJECT(d));
@@ -254,8 +254,7 @@ static MemTxResult cxl_write_cfmws(void *opaque, hwaddr addr, uint64_t data,
 
     if (cxl_is_remote_root_port(d)) {
         trace_cxl_write_cfmws("CXL.mem via RP", addr, size, data);
-        result = cxl_remote_cxl_mem_write_with_cache(d, addr + fw->base, data,
-                                                     size, attrs);
+        result = cxl_host_type3_hcoh_write(d, addr + fw->base, data, size, attrs);
     } else {
         type = object_get_typename(OBJECT(d));
         if (g_strcmp0(type, "cxl-type1") == 0)

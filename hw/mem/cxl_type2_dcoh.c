@@ -15,9 +15,11 @@
 #include "hw/cxl/cxl_dcache.h"
 #include "hw/cxl/cxl_type2_dcoh.h"
 
+// From cxl_type2_hcoh.c
+extern QemuSpin ct2d_lock;
+
 static DeviceCoh *dcoh;
 static Cache *dcache;
-extern QemuSpin ct2d_lock;
 
 static GRand *rng_opc;
 static GRand *rng_addr;
