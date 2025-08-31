@@ -301,9 +301,9 @@ static ret_code cmd_identify_memory_device(struct cxl_cmd *cmd,
     snprintf(id->fw_revision, 0x10, "EEUM FW VER. %d", 1);
 
     id->total_capacity = size / CXL_CAPACITY_MULTIPLIER;
-    id->persistent_capacity = 0; // We don't support PMEM
-    id->volatile_capacity = size / CXL_CAPACITY_MULTIPLIER;
-    id->lsa_size = 0; // cvc->get_lsa_size(ct3d);
+    id->persistent_capacity = size / CXL_CAPACITY_MULTIPLIER / 2;
+    id->volatile_capacity = size / CXL_CAPACITY_MULTIPLIER / 2;
+    id->lsa_size = 4096;
     id->partition_align = 0;
 
     *len = sizeof(*id);
