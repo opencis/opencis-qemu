@@ -54,7 +54,7 @@ static int ct3_build_cdat_entries_for_mr(CDATSubHeader **cdat_table,
             .length = sizeof(*dsmas),
         },
         .DSMADhandle = dsmad_handle,
-        .flags = 0,
+        .flags = CDAT_DSMAS_FLAG_NV,
         .DPA_base = 0,
         .DPA_length = int128_get64(mr->size),
     };
@@ -503,6 +503,47 @@ static void ct3d_reg_write(void *opaque, hwaddr offset, uint64_t value,
     }
 }
 
+static bool cxl_setup_memory(CXLType3Dev *ct3d, Error **errp)
+{
+    DeviceState *ds = DEVICE(ct3d);
+    MemoryRegion *mr;
+    char *name;
+
+    if (!ct3d->hostmem) {
+        error_setg(errp, "memdev property must be set");
+        return false;
+    }
+
+    mr = host_memory_backend_get_memory(ct3d->hostmem);
+    if (!mr) {
+        error_setg(errp, "memdev property must be set");
+        return false;
+    }
+    memory_region_set_nonvolatile(mr, true);
+    memory_region_set_enabled(mr, true);
+    host_memory_backend_set_mapped(ct3d->hostmem, true);
+
+    if (ds->id) {
+        name = g_strdup_printf("cxl-type3-dpa-space:%s", ds->id);
+    } else {
+        name = g_strdup("cxl-type3-dpa-space");
+    }
+    address_space_init(&ct3d->hostmem_as, mr, name);
+    g_free(name);
+
+    ct3d->cxl_dstate.pmem_size = 1024 * 1024 * 1024;
+
+    fprintf(stderr, "ct3d->cxl_dstate.pmem_size: %lu\n", ct3d->cxl_dstate.pmem_size);
+    sleep(1);
+
+    if (!ct3d->lsa) {
+        error_setg(errp, "lsa property must be set");
+        return false;
+    }
+
+    return true;
+}
+
 static DOEProtocol doe_cdat_prot[] = {
     { CXL_VENDOR_ID, CXL_DOE_TABLE_ACCESS, cxl_doe_cdat_rsp },
     { }
@@ -518,6 +559,10 @@ static void ct3_realize(PCIDevice *pci_dev, Error **errp)
     int rc;
 
     QTAILQ_INIT(&ct3d->error_list);
+
+    if (!cxl_setup_memory(ct3d, errp)) {
+        return;
+    }
 
     pci_config_set_prog_interface(pci_conf, 0x10);
 
@@ -580,6 +625,9 @@ static void ct3_realize(PCIDevice *pci_dev, Error **errp)
 err_release_cdat:
     cxl_doe_cdat_release(cxl_cstate);
     g_free(regs->special_ops);
+err_address_space_free:
+    address_space_destroy(&ct3d->hostmem_as);
+    return;
 }
 
 static void ct3_exit(PCIDevice *pci_dev)
